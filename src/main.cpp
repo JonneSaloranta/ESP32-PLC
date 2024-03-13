@@ -2,16 +2,18 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <FastLED_NeoPixel.h>
+#include "BasicStepperDriver.h"
 
 EventGroupHandle_t wifiEventGroup;
 const int WIFI_CONNECTED_BIT = BIT0;
 
 WiFiClient client;
 
-const char *ssid = "ArduinoLabra";
-const char *password = "12345678";
+// const char *ssid = "ArduinoLabra";
+// const char *password = "12345678";
 
-const char *server_ip = "192.168.1.101";
+// const char *server_ip = "192.168.1.101";
+const char *server_ip = "192.168.1.100";
 const int server_port = 12345;
 
 const int emergencyPin = 18;
@@ -22,10 +24,22 @@ const int beep_delay = 500;
 const int limit1 = 22;
 const int limit2 = 23;
 
-const int m1dir = 27;
-const int m1step = 26;
-const int m2dir = 25;
-const int m2step = 33;
+#define MOTOR_STEPS 200
+#define M1RPM 30
+#define M2RPM 30
+#define MICROSTEPS 1
+
+const int M1DIR = 27;
+const int M1STEP = 26;
+BasicStepperDriver stepper1(MOTOR_STEPS, M1DIR, M1STEP);
+
+const int M2DIR = 25;
+const int M2STEP = 33;
+BasicStepperDriver stepper2(MOTOR_STEPS, M2DIR, M2STEP);
+
+#define BUFFER_SIZE 1024
+char buffer[BUFFER_SIZE];
+int bufferIndex = 0;
 
 const int ledPin = 32;
 const int number_of_leds = 7;
@@ -58,6 +72,8 @@ enum State
     CONNECTING_TO_SERVER,
     CONNECTED_TO_SERVER
 };
+
+bool busy = false;
 
 enum State process_state;
 
@@ -173,10 +189,6 @@ void ready_sound()
     noTone(buzzer);
 }
 
-void emergency_sound()
-{
-}
-
 void emergency_state()
 {
     Serial.println("Emergency state");
@@ -184,20 +196,85 @@ void emergency_state()
     clear_command();
 }
 
-void set_direction(int motor, int direction)
+bool check_limit(int pin)
 {
-    digitalWrite(motor, direction);
+    return digitalRead(pin) != false;
 }
 
-void move_motor(int motor, int steps, int delay_time)
+void tip_holder()
 {
-    for (int i = 0; i < steps; i++)
+    stepper2.rotate(-45);
+    delay(500);
+    stepper2.rotate(45);
+    delay(500);
+}
+
+void left_90()
+{
+    stepper1.rotate(-90);
+}
+
+void right_90()
+{
+    stepper1.rotate(90);
+}
+
+void up_45()
+{
+    stepper2.rotate(45);
+}
+
+void down_45()
+{
+    stepper2.rotate(-45);
+}
+
+void calibrate()
+{
+    bool limit1Reached = false;
+    bool limit2Reached = false;
+
+    // Initialize stepper for calibration
+    stepper2.rotate(180);
+    delay(500);
+    stepper2.rotate(-90);
+    delay(500);
+
+    // Continuously move stepper1 towards limit1
+    while (!limit1Reached)
     {
-        digitalWrite(motor, HIGH);
-        delayMicroseconds(delay_time);
-        digitalWrite(motor, LOW);
-        delayMicroseconds(delay_time);
+        if (check_limit(limit1))
+        {
+            stepper1.move(1); // Move a single step towards limit1
+            delay(10);        // Adjust delay for desired speed
+        }
+        else
+        {
+            stepper1.stop(); // Stop if limit switch is hit
+            limit1Reached = true;
+        }
     }
+
+    delay(250);
+
+    // Continuously move stepper1 towards limit2
+    while (!limit2Reached)
+    {
+        if (check_limit(limit2))
+        {
+            stepper1.move(-1); // Move a single step towards limit2
+            delay(10);         // Adjust delay for desired speed
+        }
+        else
+        {
+            stepper1.stop(); // Stop if limit switch is hit
+            limit2Reached = true;
+        }
+    }
+
+    delay(500);
+
+    stepper1.rotate(95);
 }
 
 void setup()
@@ -209,10 +286,10 @@ void setup()
 
     // fade_flash(red, 1, 2, false);
 
-    pinMode(m1step, OUTPUT);
-    pinMode(m1dir, OUTPUT);
-    pinMode(m2step, OUTPUT);
-    pinMode(m2dir, OUTPUT);
+    // pinMode(M1STEP, OUTPUT);
+    // pinMode(M1DIR, OUTPUT);
+    // pinMode(M2STEP, OUTPUT);
+    // pinMode(M2DIR, OUTPUT);
 
     pinMode(limit1, INPUT_PULLUP);
     pinMode(limit2, INPUT_PULLUP);
@@ -221,8 +298,15 @@ void setup()
 
     pinMode(ledPin, OUTPUT);
 
-    set_direction(m1dir, HIGH);
-    move_motor(m1step, 100, 2000);
+    // set_direction(M1DIR, HIGH);
+    // move_motor(M1STEP, 100, 2000);
+
+    stepper1.begin(M1RPM, MICROSTEPS);
+    stepper2.begin(M2RPM, MICROSTEPS);
+
+    calibrate();
+
+    tip_holder();
 
     // Create an event group
     wifiEventGroup = xEventGroupCreate();
@@ -277,7 +361,7 @@ void maintainWiFi(void *parameter)
     for (;;)
     {
 
-        if (command.startsWith("reset"))
+        if (command.startsWith("Reset"))
         {
             process_state = STOPPED;
         }
@@ -300,11 +384,6 @@ void maintainWiFi(void *parameter)
             continue;
         }
 
-        if (process_state == RUNNING)
-        {
-            continue;
-        }
-
         if (digitalRead(emergencyPin) == HIGH && process_state != EMERGENCY)
         {
             process_state = EMERGENCY;
@@ -318,24 +397,70 @@ void maintainWiFi(void *parameter)
             digitalWrite(ledPin, LOW);
         }
 
-        if (command.startsWith("person:"))
-        {
-            digitalWrite(ledPin, HIGH);
-            lastMillis = millis();
-        }
+        // if (command.startsWith("motor:"))
+        // {
+        //     int steps = command.substring(6).toInt();
+        //     move_motor(M1STEP, steps, 2000);
+        //     clear_command();
+        // }
 
-        if (command.startsWith("motor:"))
+        // if (command.startsWith("dir:"))
+        // {
+        //     int dir = command.substring(4).toInt();
+        //     set_direction(M1DIR, dir);
+        //     clear_command();
+        // }
+
+        if (command.startsWith("adapter:"))
         {
-            int steps = command.substring(6).toInt();
-            move_motor(m1step, steps, 2000);
+            if (!busy)
+            {
+                busy = true;
+                left_90();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                down_45();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                up_45();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                right_90();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                clear_command();
+                busy = false;
+            }
+
             clear_command();
         }
 
-        if (command.startsWith("dir:"))
+        if (command.startsWith("battery:"))
         {
-            int dir = command.substring(4).toInt();
-            set_direction(m1dir, dir);
-            clear_command();
+            if (!busy)
+            {
+                busy = true;
+                down_45();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                up_45();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                clear_command();
+                busy = false;
+            }
+        }
+
+        if (command.startsWith("potentiometer:"))
+        {
+            if (!busy)
+            {
+                busy = true;
+                right_90();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                down_45();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                up_45();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                left_90();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                clear_command();
+                busy = false;
+            }
         }
 
         vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -351,12 +476,12 @@ void handleClient(void *parameter)
     while (!client.connect(server_ip, server_port))
     {
         Serial.println("Connection to server failed, retrying...");
-        fade_flash(red, 1, 500, true);
+        fade_flash(red, 1, 1, true);
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
     process_state = CONNECTED_TO_SERVER;
-    Serial.println("Connected to server");
-    fade_flash(green, 1, 500, true);
+    Serial.println("Connected to a server");
+    fade_flash(green, 1, 1, true);
 
     // Handle client communication
     while (true)
@@ -365,9 +490,24 @@ void handleClient(void *parameter)
         {
             if (client.available())
             {
-
-                command = client.readStringUntil('\n');
-                Serial.println(command);
+                char c = client.read(); // Read a character
+                // Serial.println(c);
+                if (c == '\n' || c == '\r' || bufferIndex == BUFFER_SIZE - 1)
+                {
+                    buffer[bufferIndex] = '\0'; // Null-terminate the string
+                    if (bufferIndex > 0)        // Check if there's something in the buffer
+                    {
+                        command = String(buffer); // Assign to command
+                        Serial.println(command);
+                        // Reset buffer for the next command
+                        bufferIndex = 0;
+                        memset(buffer, 0, BUFFER_SIZE);
+                    }
+                }
+                else
+                {
+                    buffer[bufferIndex++] = c; // Store character in buffer
+                }
             }
         }
         else
@@ -377,7 +517,7 @@ void handleClient(void *parameter)
             {
                 Serial.println("Reconnecting to server...");
                 process_state = CONNECTING_TO_SERVER;
-                fade_flash(blue, 1, 500, true);
+                fade_flash(blue, 1, 1, true);
                 vTaskDelay(500 / portTICK_PERIOD_MS);
             }
         }
