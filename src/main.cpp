@@ -9,6 +9,9 @@ const int WIFI_CONNECTED_BIT = BIT0;
 
 WiFiClient client;
 
+const char *ssid = "SLRNT-2G";
+const char *password = "04042020";
+
 // const char *ssid = "ArduinoLabra";
 // const char *password = "12345678";
 
@@ -66,7 +69,6 @@ enum State
     STOPPED,
     RUNNING,
     EMERGENCY,
-    ERROR,
     CONNECTING_TO_WIFI,
     CONNECTED_TO_WIFI,
     CONNECTING_TO_SERVER,
@@ -150,6 +152,12 @@ void fade_flash(uint32_t color, int flashes, int speed, bool used_in_core)
     }
 }
 
+void set_solid_color(uint32_t color)
+{
+    strip.fill(color, 0, number_of_leds);
+    strip.show();
+}
+
 void set_led_color(uint32_t color)
 {
     strip.fill(color, 0, number_of_leds);
@@ -193,7 +201,6 @@ void emergency_state()
 {
     Serial.println("Emergency state");
     number_of_flashes(red, ledPin, 1, 500, true);
-    clear_command();
 }
 
 bool check_limit(int pin)
@@ -364,6 +371,8 @@ void maintainWiFi(void *parameter)
         if (command.startsWith("Reset"))
         {
             process_state = STOPPED;
+            clear_command();
+            continue;
         }
 
         if (process_state == EMERGENCY)
@@ -372,9 +381,18 @@ void maintainWiFi(void *parameter)
             continue;
         }
 
-        if (process_state == ERROR)
+        if (command.startsWith("Stop"))
         {
-            number_of_flashes(red, ledPin, 1, 500, true);
+            process_state = STOPPED;
+            clear_command();
+            continue;
+        }
+
+        if (command.startsWith("Start"))
+        {
+            process_state = RUNNING;
+            set_solid_color(green);
+            clear_command();
             continue;
         }
 
@@ -384,85 +402,81 @@ void maintainWiFi(void *parameter)
             continue;
         }
 
+        if (command.startsWith("Emergency"))
+        {
+            process_state = EMERGENCY;
+            clear_command();
+            continue;
+        }
+
         if (digitalRead(emergencyPin) == HIGH && process_state != EMERGENCY)
         {
             process_state = EMERGENCY;
             continue;
         }
 
-        set_led_color(black);
+        // set_led_color(black);
 
-        if (millis() - lastMillis > 1000)
-        {
-            digitalWrite(ledPin, LOW);
-        }
-
-        // if (command.startsWith("motor:"))
+        // if (millis() - lastMillis > 1000)
         // {
-        //     int steps = command.substring(6).toInt();
-        //     move_motor(M1STEP, steps, 2000);
-        //     clear_command();
+        //     digitalWrite(ledPin, LOW);
         // }
 
-        // if (command.startsWith("dir:"))
-        // {
-        //     int dir = command.substring(4).toInt();
-        //     set_direction(M1DIR, dir);
-        //     clear_command();
-        // }
-
-        if (command.startsWith("adapter:"))
+        if (process_state == RUNNING)
         {
-            if (!busy)
+
+            if (command.startsWith("adapter:"))
             {
-                busy = true;
-                left_90();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                down_45();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                up_45();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                right_90();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
+                if (!busy)
+                {
+                    busy = true;
+                    left_90();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    down_45();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    up_45();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    right_90();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    clear_command();
+                    busy = false;
+                }
+
                 clear_command();
-                busy = false;
             }
 
-            clear_command();
-        }
-
-        if (command.startsWith("battery:"))
-        {
-            if (!busy)
+            if (command.startsWith("battery:"))
             {
-                busy = true;
-                down_45();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                up_45();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                clear_command();
-                busy = false;
+                if (!busy)
+                {
+                    busy = true;
+                    down_45();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    up_45();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    clear_command();
+                    busy = false;
+                }
+            }
+
+            if (command.startsWith("potentiometer:"))
+            {
+                if (!busy)
+                {
+                    busy = true;
+                    right_90();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    down_45();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    up_45();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    left_90();
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    clear_command();
+                    busy = false;
+                }
             }
         }
-
-        if (command.startsWith("potentiometer:"))
-        {
-            if (!busy)
-            {
-                busy = true;
-                right_90();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                down_45();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                up_45();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                left_90();
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                clear_command();
-                busy = false;
-            }
-        }
-
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
@@ -475,7 +489,7 @@ void handleClient(void *parameter)
     // Now attempt to connect to the TCP server
     while (!client.connect(server_ip, server_port))
     {
-        Serial.println("Connection to server failed, retrying...");
+        Serial.println("Connection to server failed. Is the server online? retrying...");
         fade_flash(red, 1, 1, true);
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
@@ -488,8 +502,11 @@ void handleClient(void *parameter)
     {
         if (client.connected())
         {
+            // Serial.println("Client connected");
             if (client.available())
             {
+                // Serial.println("Client available");
+
                 char c = client.read(); // Read a character
                 // Serial.println(c);
                 if (c == '\n' || c == '\r' || bufferIndex == BUFFER_SIZE - 1)
@@ -518,7 +535,7 @@ void handleClient(void *parameter)
                 Serial.println("Reconnecting to server...");
                 process_state = CONNECTING_TO_SERVER;
                 fade_flash(blue, 1, 1, true);
-                vTaskDelay(500 / portTICK_PERIOD_MS);
+                vTaskDelay(10 / portTICK_PERIOD_MS);
             }
         }
         vTaskDelay(1 / portTICK_PERIOD_MS); // Small delay to prevent task from hogging CPU
