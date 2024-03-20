@@ -9,11 +9,8 @@ const int WIFI_CONNECTED_BIT = BIT0;
 
 WiFiClient client;
 
-const char *ssid = "SLRNT-2G";
-const char *password = "04042020";
-
-// const char *ssid = "ArduinoLabra";
-// const char *password = "12345678";
+const char *ssid = "ArduinoLabra";
+const char *password = "12345678";
 
 // const char *server_ip = "192.168.1.101";
 const char *server_ip = "192.168.1.100";
@@ -199,8 +196,8 @@ void ready_sound()
 
 void emergency_state()
 {
-    Serial.println("Emergency state");
-    number_of_flashes(red, ledPin, 1, 500, true);
+    // Serial.println("Emergency state");
+    number_of_flashes(red, ledPin, 1, 1000, true);
 }
 
 bool check_limit(int pin)
@@ -244,7 +241,7 @@ void calibrate()
     // Initialize stepper for calibration
     stepper2.rotate(180);
     delay(500);
-    stepper2.rotate(-90);
+    stepper2.rotate(-86);
     delay(500);
 
     // Continuously move stepper1 towards limit1
@@ -368,6 +365,12 @@ void maintainWiFi(void *parameter)
     for (;;)
     {
 
+        if (digitalRead(emergencyPin) == HIGH && process_state != EMERGENCY)
+        {
+            process_state = EMERGENCY;
+            continue;
+        }
+
         if (command.startsWith("Reset"))
         {
             process_state = STOPPED;
@@ -375,9 +378,10 @@ void maintainWiFi(void *parameter)
             continue;
         }
 
-        if (process_state == EMERGENCY)
+        if (command.startsWith("Emergency"))
         {
-            emergency_state();
+            process_state = EMERGENCY;
+            clear_command();
             continue;
         }
 
@@ -396,40 +400,26 @@ void maintainWiFi(void *parameter)
             continue;
         }
 
+        if (process_state == EMERGENCY)
+        {
+            emergency_state();
+            continue;
+        }
+
         if (process_state == STOPPED)
         {
             number_of_flashes(yellow, ledPin, 1, 1000, true);
             continue;
         }
 
-        if (command.startsWith("Emergency"))
-        {
-            process_state = EMERGENCY;
-            clear_command();
-            continue;
-        }
-
-        if (digitalRead(emergencyPin) == HIGH && process_state != EMERGENCY)
-        {
-            process_state = EMERGENCY;
-            continue;
-        }
-
-        // set_led_color(black);
-
-        // if (millis() - lastMillis > 1000)
-        // {
-        //     digitalWrite(ledPin, LOW);
-        // }
-
         if (process_state == RUNNING)
         {
-
-            if (command.startsWith("adapter:"))
+            if (command.startsWith("limitswitch:"))
             {
                 if (!busy)
                 {
                     busy = true;
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
                     left_90();
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                     down_45();
@@ -450,6 +440,7 @@ void maintainWiFi(void *parameter)
                 if (!busy)
                 {
                     busy = true;
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
                     down_45();
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                     up_45();
@@ -464,6 +455,7 @@ void maintainWiFi(void *parameter)
                 if (!busy)
                 {
                     busy = true;
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
                     right_90();
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                     down_45();
@@ -496,6 +488,7 @@ void handleClient(void *parameter)
     process_state = CONNECTED_TO_SERVER;
     Serial.println("Connected to a server");
     fade_flash(green, 1, 1, true);
+    process_state = STOPPED;
 
     // Handle client communication
     while (true)
